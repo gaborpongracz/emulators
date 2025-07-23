@@ -1,5 +1,5 @@
-FROM golang:1.23-alpine As builder
-MAINTAINER Fullstory Engineering
+FROM golang:1.23-alpine AS builder
+LABEL org.opencontainers.image.authors="Fullstory Engineering"
 
 # create non-privileged group and user
 RUN addgroup -S emulators && adduser -S emulators -G emulators
