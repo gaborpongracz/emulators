@@ -169,12 +169,56 @@ func (g *GcsEmu) Handler(w http.ResponseWriter, r *http.Request) {
 		if r.Form.Get("upload_id") != "" {
 			g.handleGcsNewObjectResume(ctx, baseUrl, w, r, r.Form.Get("upload_id"))
 		} else {
-			// unsupported method, or maybe should never happen
-			g.gapiError(w, http.StatusBadRequest, fmt.Sprintf("unsupported PUT request: %v\n%s", r.URL, maybeNotImplementedErrorMsg))
+			g.handleGcsPutObject(ctx, baseUrl, w, r, bucket, object, conds)
 		}
+	case "OPTIONS", "HEAD":
+		g.handleGcsCorsRequest(ctx, w, r)
 	default:
 		g.gapiError(w, http.StatusMethodNotAllowed, "")
 	}
+}
+
+func (g *GcsEmu) handleGcsCorsRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Goog-Content-Length-Range,X-Csrf-Token")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,HEAD,PUT,POST,OPTIONS")
+	w.Header().Set("Access-Control-Max-Age", "3000")
+	w.Header().Set("Vary", "Origin")
+	w.Header().Set("Server", "UploadServer")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "private,max-age=0")
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (g *GcsEmu) handleGcsPutObject(ctx context.Context, baseUrl HttpBaseUrl, w http.ResponseWriter, r *http.Request, bucket, object string, conds cloudstorage.Conditions) {
+	contents, err := io.ReadAll(r.Body)
+	if err != nil {
+		g.gapiError(w, http.StatusBadRequest, "failed to load object content")
+		return
+	}
+
+	obj := storage.Object{}
+	obj.Bucket = bucket
+	obj.Name = object
+	obj.Size = uint64(len(contents))
+
+	meta, err := g.finishUpload(ctx, baseUrl, &obj, contents, bucket, conds)
+	if err != nil {
+		g.gapiError(w, httpStatusCodeOf(err), err.Error())
+		return
+	}
+
+	w.Header().Set("Location", ObjectUrl(baseUrl, bucket, obj.Name))
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("x-goog-generation", strconv.FormatInt(meta.Generation, 10))
+	w.Header().Set("X-Goog-Metageneration", strconv.FormatInt(meta.Metageneration, 10))
+	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Goog-Content-Length-Range,X-Csrf-Token")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,HEAD,PUT,POST,OPTIONS")
+	w.WriteHeader(http.StatusOK)
+
+	g.jsonRespond(w, meta)
 }
 
 func (g *GcsEmu) handleGcsCompose(ctx context.Context, baseUrl HttpBaseUrl, w http.ResponseWriter, r *http.Request, bucket, object string, conds cloudstorage.Conditions) {
